@@ -1,47 +1,28 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/munnerz/kube-plex/pkg/signals"
+	"github.com/chrispyduck/kube-plex/pkg/signals"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-// data pvc name
-var dataPVC = os.Getenv("DATA_PVC")
-
-// config pvc name
-var configPVC = os.Getenv("CONFIG_PVC")
-
-// transcode pvc name
-var transcodePVC = os.Getenv("TRANSCODE_PVC")
-
-// pms namespace
 var namespace = os.Getenv("KUBE_NAMESPACE")
-
-// image for the plexmediaserver container containing the transcoder. This
-// should be set to the same as the 'master' pms server
-var pmsImage = os.Getenv("PMS_IMAGE")
+var currentPodName = os.Getenv("KUBE_POD_NAME")
 var pmsInternalAddress = os.Getenv("PMS_INTERNAL_ADDRESS")
 
 func main() {
-	env := os.Environ()
 	args := os.Args
 
-	rewriteEnv(env)
 	rewriteArgs(args)
-	cwd, err := os.Getwd()
-	if err != nil {
-		log.Fatalf("Error getting working directory: %s", err)
-	}
-	pod := generatePod(cwd, env, args)
 
 	cfg, err := clientcmd.BuildConfigFromFlags("", "")
 	if err != nil {
@@ -53,10 +34,23 @@ func main() {
 		log.Fatalf("Error building kubernetes clientset: %s", err)
 	}
 
-	pod, err = kubeClient.CoreV1().Pods(namespace).Create(pod)
+	cwd, err := os.Getwd()
+	if err != nil {
+		log.Fatalf("Error getting working directory: %s", err)
+	}
+
+	currentPod, err := kubeClient.CoreV1().Pods(namespace).Get(context.TODO(), currentPodName, metav1.GetOptions{})
+	if err != nil {
+		log.Fatalf("Error getting current pod: %s", err)
+	}
+
+	pod := generatePod(currentPod, cwd, args)
+
+	createdPod, err := kubeClient.CoreV1().Pods(namespace).Create(context.TODO(), pod, metav1.CreateOptions{})
 	if err != nil {
 		log.Fatalf("Error creating pod: %s", err)
 	}
+	log.Printf("Created pod: %s", createdPod.GetName())
 
 	stopCh := signals.SetupSignalHandler()
 	waitFn := func() <-chan error {
@@ -77,15 +71,10 @@ func main() {
 	}
 
 	log.Printf("Cleaning up pod...")
-	err = kubeClient.CoreV1().Pods(namespace).Delete(pod.Name, nil)
+	err = kubeClient.CoreV1().Pods(namespace).Delete(context.TODO(), pod.Name, metav1.DeleteOptions{})
 	if err != nil {
 		log.Fatalf("Error cleaning up pod: %s", err)
 	}
-}
-
-// rewriteEnv rewrites environment variables to be passed to the transcoder
-func rewriteEnv(in []string) {
-	// no changes needed
 }
 
 func rewriteArgs(in []string) {
@@ -99,11 +88,12 @@ func rewriteArgs(in []string) {
 	}
 }
 
-func generatePod(cwd string, env []string, args []string) *corev1.Pod {
-	envVars := toCoreV1EnvVar(env)
-	return &corev1.Pod{
+func generatePod(currentPod *corev1.Pod, cwd string, args []string) *corev1.Pod {
+	//envVars := toCoreV1EnvVar(env)
+	log.Printf("Creating pod to run command: %s", strings.Join(args, " "))
+	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: "pms-elastic-transcoder-",
+			GenerateName: currentPod.ObjectMeta.Labels["app"] + "-transcoder-",
 		},
 		Spec: corev1.PodSpec{
 			NodeSelector: map[string]string{
@@ -112,57 +102,30 @@ func generatePod(cwd string, env []string, args []string) *corev1.Pod {
 			RestartPolicy: corev1.RestartPolicyNever,
 			Containers: []corev1.Container{
 				{
-					Name:       "plex",
-					Command:    args,
-					Image:      pmsImage,
-					Env:        envVars,
-					WorkingDir: cwd,
-					VolumeMounts: []corev1.VolumeMount{
-						{
-							Name:      "data",
-							MountPath: "/data",
-							ReadOnly:  true,
-						},
-						{
-							Name:      "config",
-							MountPath: "/config",
-							ReadOnly:  true,
-						},
-						{
-							Name:      "transcode",
-							MountPath: "/transcode",
-						},
-					},
+					Name:         "plex",
+					Command:      args,
+					Image:        currentPod.Spec.Containers[0].Image,
+					Env:          currentPod.Spec.Containers[0].Env,
+					WorkingDir:   cwd,
+					VolumeMounts: []corev1.VolumeMount{},
 				},
 			},
-			Volumes: []corev1.Volume{
-				{
-					Name: "data",
-					VolumeSource: corev1.VolumeSource{
-						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-							ClaimName: dataPVC,
-						},
-					},
-				},
-				{
-					Name: "config",
-					VolumeSource: corev1.VolumeSource{
-						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-							ClaimName: configPVC,
-						},
-					},
-				},
-				{
-					Name: "transcode",
-					VolumeSource: corev1.VolumeSource{
-						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-							ClaimName: transcodePVC,
-						},
-					},
-				},
-			},
+			Volumes: []corev1.Volume{},
 		},
 	}
+	for _, currentPodVolumeMount := range currentPod.Spec.Containers[0].VolumeMounts {
+		if currentPodVolumeMount.Name != "shared" && !strings.HasPrefix(currentPodVolumeMount.Name, "kube") {
+			log.Printf("Adding volume mount for %s", currentPodVolumeMount.Name)
+			pod.Spec.Containers[0].VolumeMounts = append(pod.Spec.Containers[0].VolumeMounts, currentPodVolumeMount)
+		}
+	}
+	for _, currentPodVolume := range currentPod.Spec.Volumes {
+		if currentPodVolume.Name != "shared" && !strings.HasPrefix(currentPodVolume.Name, "kube") {
+			log.Printf("Adding volume for %s", currentPodVolume.Name)
+			pod.Spec.Volumes = append(pod.Spec.Volumes, currentPodVolume)
+		}
+	}
+	return pod
 }
 
 func toCoreV1EnvVar(in []string) []corev1.EnvVar {
@@ -179,7 +142,7 @@ func toCoreV1EnvVar(in []string) []corev1.EnvVar {
 
 func waitForPodCompletion(cl kubernetes.Interface, pod *corev1.Pod) error {
 	for {
-		pod, err := cl.CoreV1().Pods(pod.Namespace).Get(pod.Name, metav1.GetOptions{})
+		pod, err := cl.CoreV1().Pods(pod.Namespace).Get(context.TODO(), pod.Name, metav1.GetOptions{})
 		if err != nil {
 			return err
 		}

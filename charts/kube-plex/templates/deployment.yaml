@@ -96,50 +96,15 @@ spec:
         # kube-plex env vars
         - name: PMS_INTERNAL_ADDRESS
           value: http://{{ template "fullname" . }}:32400
-        - name: PMS_IMAGE
-          value: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
         - name: KUBE_NAMESPACE
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
-        - name: TRANSCODE_PVC
-{{- if .Values.persistence.transcode.claimName }}
-          value: "{{ .Values.persistence.transcode.claimName }}"
-{{- else }}
-          value: "{{ template "fullname" . }}-transcode"
-{{- end }}
-        - name: DATA_PVC
-{{- if .Values.persistence.data.claimName }}
-          value: "{{ .Values.persistence.data.claimName }}"
-{{- else }}
-          value: "{{ template "fullname" . }}-data"
-{{- end }}
-        - name: CONFIG_PVC
-{{- if .Values.persistence.config.claimName }}
-          value: "{{ .Values.persistence.config.claimName }}"
-{{- else }}
-          value: "{{ template "fullname" . }}-config"
-{{- end }}
-{{- if .Values.proxy.enable }}
-  {{- if .Values.proxy.http }}
-        - name: "HTTP_PROXY"
-          value: "{{.Values.proxy.http}}"
-  {{- end }}
-  {{- if .Values.proxy.https }}
-        - name: "HTTPS_PROXY"
-          value: "{{.Values.proxy.https}}"
-  {{- end }}
-  {{- if .Values.proxy.noproxy }}
-        - name: "NO_PROXY"
-          value: "{{.Values.proxy.noproxy}}"
-  {{- end }}
-{{- end }}
+        - name: KUBE_POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
         volumeMounts:
-        - name: data
-          mountPath: /data
-        {{- if .Values.persistence.data.subPath }}
-          subPath: {{ .Values.persistence.data.subPath }}
-        {{ end }}
         - name: config
           mountPath: /config
         {{- if .Values.persistence.config.subPath }}
@@ -152,7 +117,7 @@ spec:
         {{ end }}
         {{-  range .Values.persistence.extraData }}
         - mountPath: "/data-{{ .name }}"
-          name: "extradata-{{ .name }}"
+          name: "data-{{ .name }}"
         {{- end }}
         - name: shared
           mountPath: /shared
@@ -163,13 +128,6 @@ spec:
 {{ toYaml .Values.nodeSelector | indent 8 }}
     {{- end }}
       volumes:
-      - name: data
-        persistentVolumeClaim:
-{{- if .Values.persistence.data.claimName }}
-          claimName: "{{ .Values.persistence.data.claimName }}"
-{{- else }}
-          claimName: "{{ template "fullname" . }}-data"
-{{- end }}
       - name: config
         persistentVolumeClaim:
 {{- if .Values.persistence.config.claimName }}
@@ -189,7 +147,7 @@ spec:
         emptyDir: {}
 {{- end }}
 {{-  range .Values.persistence.extraData }}
-      - name: "extradata-{{ .name }}"
+      - name: "data-{{ .name }}"
         persistentVolumeClaim:
 {{- if .claimName }}
           claimName: "{{ .claimName }}"
