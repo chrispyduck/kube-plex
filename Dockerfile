@@ -4,5 +4,5 @@ COPY . .
 RUN go get -d -v ./...
 RUN go build -a -o /dist/kube-plex .
 
-FROM scratch AS dist
+FROM alpine:latest AS dist
 COPY --from=build /dist/kube-plex /kube-plex

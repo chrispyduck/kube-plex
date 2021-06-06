@@ -9,8 +9,8 @@ image:
 kubePlex:
   enabled: true
   image:
-    repository: quay.io/munnerz/kube-plex
-    tag: latest
+    repository: docker.io/xtrachrispyduck/kube-plex
+    tag: main
     pullPolicy: Always
 
 # Override this with the plex claim token from plex.tv/claim
