@@ -1,4 +1,4 @@
-name: Go
+name: CI
 
 on:
   push:
@@ -7,29 +7,9 @@ on:
     branches: [ main ]
 
 jobs:
-
-  build:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v2
-
-    - name: Set up Go
-      uses: actions/setup-go@v2
-      with:
-        go-version: 1.15
-
-    - name: Build
-      run: go build -v ./...
-      
-    - name: Archive production artifacts
-      uses: actions/upload-artifact@v2
-      with:
-        name: kube-plex
-        path: |
-          kube-plex
           
-  package:
-    name: Create Docker image
+  build:
+    name: Build & Pack
     needs: build
     runs-on: ubuntu-latest
     steps:
